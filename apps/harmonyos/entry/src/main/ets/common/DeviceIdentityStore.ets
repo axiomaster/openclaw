@@ -3,6 +3,9 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { huks } from '@kit.UniversalKeystoreKit';
+
+const HUKS_KEY_ALIAS = 'openclaw_node_identity';
 
 export interface DeviceIdentity {
   deviceId: string;
@@ -34,16 +37,31 @@ export class DeviceIdentityStore {
 
   public async signPayload(payload: string, identity: DeviceIdentity): Promise<string | undefined> {
     try {
-      const priKeyData = this.base64.decodeSync(identity.privateKeyPkcs8Base64);
-      const asyKeyGenerator = cryptoFramework.createAsyKeyGenerator('Ed25519');
-      const keyPair = await asyKeyGenerator.convertKey(null, { data: priKeyData });
-      
-      const signer = cryptoFramework.createSign('Ed25519');
-      await signer.init(keyPair.priKey);
+      if (identity.privateKeyPkcs8Base64 !== 'HUKS_STORED') {
+        throw new Error('Legacy plain-text key cannot be used. Key has been discarded.');
+      }
+
+      const properties: Array<huks.HuksParam> = [
+        { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_ED25519 },
+        { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_SIGN },
+        { tag: huks.HuksTag.HUKS_TAG_DIGEST, value: huks.HuksKeyDigest.HUKS_DIGEST_NONE },
+      ];
+      const options: huks.HuksOptions = { properties: properties };
+
+      await huks.hasKeyItem(HUKS_KEY_ALIAS, options); // Ensure key exists
+      const handle = await huks.initSession(HUKS_KEY_ALIAS, options);
+
       const payloadData = this.encoder.encode(payload);
-      const signature = await signer.sign({ data: payloadData });
+      const finishOptions: huks.HuksOptions = {
+        inData: payloadData,
+        properties: properties
+      };
       
-      return this.base64UrlEncode(signature.data);
+      const signatureResult = await huks.finishSession(handle.handle, finishOptions);
+      if (!signatureResult.outData) {
+        throw new Error('Signature outData is undefined');
+      }
+      return this.base64UrlEncode(signatureResult.outData);
     } catch (e) {
       console.error('DeviceIdentityStore', `signPayload FAILED: ${e instanceof Error ? e.message : String(e)}`);
       return undefined;
@@ -69,6 +87,19 @@ export class DeviceIdentityStore {
       if (!decoded.deviceId || !decoded.publicKeyRawBase64 || !decoded.privateKeyPkcs8Base64) {
         return undefined;
       }
+      
+      if (decoded.privateKeyPkcs8Base64 !== 'HUKS_STORED') {
+        console.warn('DeviceIdentityStore', 'Legacy key found, discarding to force HUKS generation');
+        try { fs.unlinkSync(this.identityPath); } catch (e) {}
+        return undefined;
+      }
+
+      const exist = await huks.hasKeyItem(HUKS_KEY_ALIAS, { properties: [] });
+      if (!exist) {
+        console.warn('DeviceIdentityStore', 'Key not found in HUKS, discarding cache');
+        return undefined;
+      }
+
       return decoded;
     } catch (e) {
       console.error('DeviceIdentityStore', `load FAILED: ${e instanceof Error ? e.message : String(e)}`);
@@ -92,17 +123,31 @@ export class DeviceIdentityStore {
   }
 
   private async generate(): Promise<DeviceIdentity> {
-    const asyKeyGenerator = cryptoFramework.createAsyKeyGenerator('Ed25519');
-    const keyPair = await asyKeyGenerator.generateKeyPair();
-    
-    // Export keys
+    const properties: Array<huks.HuksParam> = [
+      { tag: huks.HuksTag.HUKS_TAG_ALGORITHM, value: huks.HuksKeyAlg.HUKS_ALG_ED25519 },
+      { tag: huks.HuksTag.HUKS_TAG_PURPOSE, value: huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_SIGN | huks.HuksKeyPurpose.HUKS_KEY_PURPOSE_VERIFY },
+      { tag: huks.HuksTag.HUKS_TAG_KEY_SIZE, value: 256 },
+      { tag: huks.HuksTag.HUKS_TAG_DIGEST, value: huks.HuksKeyDigest.HUKS_DIGEST_NONE },
+    ];
+    const options: huks.HuksOptions = { properties: properties };
+
     try {
-      const pubKeyData = keyPair.pubKey.getEncoded();
-      const priKeyData = keyPair.priKey.getEncoded();
+      try {
+        await huks.deleteKeyItem(HUKS_KEY_ALIAS, options);
+      } catch (e) { }
       
-      let rawPublicBytes = pubKeyData.data;
+      await huks.generateKeyItem(HUKS_KEY_ALIAS, options);
+      const pubKeyItem = await huks.exportKeyItem(HUKS_KEY_ALIAS, options);
+      
+      let rawPublicBytes = pubKeyItem.outData;
+      if (!rawPublicBytes) {
+        throw new Error('Exported public key data is undefined');
+      }
+      
       if (rawPublicBytes.length === 44) {
         rawPublicBytes = rawPublicBytes.subarray(12);
+      } else if (rawPublicBytes.length > 32) {
+        rawPublicBytes = rawPublicBytes.subarray(rawPublicBytes.length - 32);
       }
       
       const deviceId = await this.sha256Hex(rawPublicBytes);
@@ -110,11 +155,11 @@ export class DeviceIdentityStore {
       return {
         deviceId: deviceId,
         publicKeyRawBase64: this.base64.encodeToStringSync(rawPublicBytes),
-        privateKeyPkcs8Base64: this.base64.encodeToStringSync(priKeyData.data),
+        privateKeyPkcs8Base64: 'HUKS_STORED',
         createdAtMs: Date.now()
       };
     } catch (e) {
-      throw new Error(`Failed to generate identity: ${e instanceof Error ? e.message : String(e)}`);
+      throw new Error(`Failed to generate identity in HUKS: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 

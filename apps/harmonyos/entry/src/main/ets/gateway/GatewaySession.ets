@@ -503,7 +503,7 @@ export class GatewaySession {
   }
 
   private generateId(): string {
-    return Math.random().toString(36).substring(2, 15);
+    return util.generateRandomUUID(true);
   }
 
   private failPendingRpc(message: string): void {

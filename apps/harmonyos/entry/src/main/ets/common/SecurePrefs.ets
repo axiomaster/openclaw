@@ -3,6 +3,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { LocationMode, locationModeFromRaw, VoiceWakeMode, voiceWakeModeFromRaw } from '../models/CommonModels';
 import { deviceInfo } from '@kit.BasicServicesKit';
+import { util } from '@kit.ArkTS';
 
 export class SecurePrefs {
   private static instance: SecurePrefs | undefined = undefined;
@@ -157,10 +158,6 @@ export class SecurePrefs {
   }
 
   private generateUUID(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
+    return util.generateRandomUUID(true);
   }
 }

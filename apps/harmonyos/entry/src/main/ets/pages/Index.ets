@@ -15,9 +15,9 @@ struct Index {
   @State isConnected: boolean = false;
   @State showChat: boolean = false;
 
-  @State manualHost: string = "192.168.43.4";
+  @State manualHost: string = "";
   @State manualPort: string = "18789";
-  @State manualToken: string = "lism";
+  @State manualToken: string = "";
   @State manualTls: boolean = false;
   
   private runtime: NodeRuntime | undefined = undefined;

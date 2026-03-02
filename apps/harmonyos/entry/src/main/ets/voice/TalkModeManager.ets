@@ -2,6 +2,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GatewaySession } from '../gateway/GatewaySession';
 import { TalkDirectiveParser, TalkDirective } from './TalkDirectiveParser';
 import { http } from '@kit.NetworkKit';
+import { util } from '@kit.ArkTS';
 
 /**
  * TalkModeManager — Full duplex talk mode with speech-to-text + TTS.
@@ -547,10 +548,6 @@ export class TalkModeManager {
   }
 
   private generateUuid(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c: string) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
+    return util.generateRandomUUID(true);
   }
 }

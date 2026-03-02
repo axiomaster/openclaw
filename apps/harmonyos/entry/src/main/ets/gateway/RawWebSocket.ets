@@ -1,4 +1,5 @@
 import { socket } from '@kit.NetworkKit';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -11,6 +12,7 @@ import { webSocket } from '@kit.NetworkKit';
 export class RawWebSocket {
   private tcp: socket.TCPSocket | null = null;
   private isHandshakeComplete = false;
+  private base64 = new util.Base64Helper();
   
   private onOpenCallback?: (err: BusinessError | undefined, value: Object | undefined) => void;
   private onMessageCallback?: (err: BusinessError | undefined, value: string | ArrayBuffer | undefined) => void;
@@ -73,7 +75,10 @@ export class RawWebSocket {
       const customUA = headerObj?.['User-Agent'] || 'OpenClawNode/1.0.0-dev (Android)';
 
       // Perform HTTP 1.1 Upgrade Handshake
-      const nonce = "dGhlIHNhbXBsZSBub25jZQ=="; // Dummy Base64 nonce
+      const random = cryptoFramework.createRandom();
+      const nonceBlob = random.generateRandomSync(16);
+      const nonceData = nonceBlob.data;
+      const nonce = this.base64.encodeToStringSync(nonceData);
       
       const handshake = 
         `GET ${path} HTTP/1.1\r\n` +
@@ -224,7 +229,10 @@ export class RawWebSocket {
     
     let payloadOffset = headerLen;
     if (mask) {
-      const maskKey = [Math.floor(Math.random()*256), Math.floor(Math.random()*256), Math.floor(Math.random()*256), Math.floor(Math.random()*256)];
+      const random = cryptoFramework.createRandom();
+      const maskBlob = random.generateRandomSync(4);
+      const maskKey = maskBlob.data;
+      
       frame[headerLen] = maskKey[0];
       frame[headerLen+1] = maskKey[1];
       frame[headerLen+2] = maskKey[2];
