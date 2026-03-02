@@ -268,11 +268,13 @@ export class GatewaySession {
 
   private onWsClose(): void {
     this.closeWebSocket();
+    this.onDisconnected('Connection closed');
     this.scheduleReconnect();
   }
 
   private onWsError(): void {
     this.closeWebSocket();
+    this.onDisconnected('Connection error');
     this.scheduleReconnect();
   }
 
@@ -304,8 +306,11 @@ export class GatewaySession {
           res.payloadJSON = frame.payloadJSON as string;
           res.error = frame.error as InvokeError;
           const resolveCb = pending.resolve;
-          if (resolveCb) {
-            resolveCb(res);
+          const rejectCb = pending.reject;
+          if (res.ok) {
+            if (resolveCb) resolveCb(res);
+          } else {
+            if (rejectCb) rejectCb(new Error(res.error?.message || "RPC failed"));
           }
         }
       } else if (type === 'event') {
@@ -390,7 +395,13 @@ export class GatewaySession {
     };
 
     hilog.info(GatewaySession.DOMAIN, GatewaySession.TAG, "[%{public}s] Sending connect RPC, role: %{public}s", this.role, options.role);
-    console.info('GatewaySession', `[${this.role}] ConnectParams JSON: ${JSON.stringify(connectParams)}`);
+    // Review 3: Redact sensitive connectParams in debug logs
+    const redactedParams = JSON.parse(JSON.stringify(connectParams)) as Record<string, Object>;
+    if (redactedParams.auth) (redactedParams.auth as Record<string, string>).token = '***';
+    if (redactedParams.auth) (redactedParams.auth as Record<string, string>).password = '***';
+    if (redactedParams.device) (redactedParams.device as Record<string, string>).nonce = '***';
+    if (redactedParams.device) (redactedParams.device as Record<string, string>).signature = '***';
+    console.info('GatewaySession', `[${this.role}] ConnectParams (redacted): ${JSON.stringify(redactedParams)}`);
 
     try {
       const res = await this.request('connect', connectParams);

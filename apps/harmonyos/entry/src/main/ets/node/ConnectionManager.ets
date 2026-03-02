@@ -111,7 +111,6 @@ export class ConnectionManager {
     
     if (this.cameraEnabled()) {
       list.push(OpenClawCameraCommand.Snap);
-      list.push(OpenClawCameraCommand.Clip);
     }
     if (this.locationMode() !== LocationMode.Off) {
       list.push(OpenClawLocationCommand.Get);

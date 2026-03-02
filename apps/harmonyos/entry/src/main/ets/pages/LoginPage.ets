@@ -42,6 +42,8 @@ struct LoginPage {
             this.message = this.runtime.statusText;
             if (this.runtime.isConnected) {
               this.navigateToMain();
+            } else if (this.isConnecting && (this.message.toLowerCase().includes('failed') || this.message.toLowerCase().includes('error'))) {
+              this.isConnecting = false;
             }
           }
         }, 500);

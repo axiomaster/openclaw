@@ -290,8 +290,8 @@ export class TalkModeManager {
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i] as Record<string, Object>;
         if (msg['role'] !== 'assistant') continue;
-        const timestamp = msg['timestamp'] as number | undefined;
-        if (timestamp !== undefined && timestamp < sinceSeconds) continue;
+        const timestampMs = msg['timestamp'] as number | undefined;
+        if (timestampMs !== undefined && (timestampMs / 1000.0) < sinceSeconds) continue;
         const content = msg['content'] as Object[];
         if (!Array.isArray(content)) continue;
         const texts: string[] = [];
@@ -464,7 +464,7 @@ export class TalkModeManager {
       const sessionCfg = config?.['session'] as Record<string, Object> | undefined;
 
       const mainKey = (sessionCfg?.['mainKey'] as string | undefined || '').trim();
-      if (mainKey.length > 0 && this.mainSessionKey !== 'main') {
+      if (mainKey.length > 0) {
         this.mainSessionKey = mainKey;
       }
 

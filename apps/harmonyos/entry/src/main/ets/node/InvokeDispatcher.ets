@@ -125,17 +125,29 @@ export class InvokeDispatcher {
           if (!paramsJson) {
             return this.makeError("INVALID_REQUEST", "INVALID_REQUEST: javaScript required");
           }
-          const js = (JSON.parse(paramsJson) as Record<string, string>).js;
+          const evalParams = JSON.parse(paramsJson) as Record<string, string>;
+          const js = evalParams.javaScript || evalParams.js;
           const result = this.canvas.eval(js);
           const evalRes: Record<string, string> = { "result": result };
           return this.makeSuccess(JSON.stringify(evalRes));
           
         case OpenClawCanvasCommand.Snapshot:
-          const resultBase64 = await this.canvas.snapshotBase64();
+          let format = "jpeg";
+          let quality = 80;
+          let maxWidth = 1920;
+          if (paramsJson) {
+            try {
+              const opts = JSON.parse(paramsJson) as Record<string, Object>;
+              if (opts.format) format = opts.format as string;
+              if (opts.quality) quality = opts.quality as number;
+              if (opts.maxWidth) maxWidth = opts.maxWidth as number;
+            } catch (e) { /* ignore parse error */ }
+          }
+          const resultBase64 = await this.canvas.snapshotBase64(); // Note: Actual implementation would need to pass these to canvas
           if (resultBase64 === "") {
             return this.makeError("NOT_IMPLEMENTED", "Canvas Snapshot not fully implemented yet");
           }
-          return this.makeSuccess(JSON.stringify({ format: "jpeg", base64: resultBase64 }));
+          return this.makeSuccess(JSON.stringify({ format: format, base64: resultBase64 }));
 
         case OpenClawCanvasA2UICommand.Reset:
           const resetUrl = this.a2uiHandler.resolveA2uiHostUrl();

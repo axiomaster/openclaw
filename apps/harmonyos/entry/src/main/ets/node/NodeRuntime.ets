@@ -131,9 +131,7 @@ export class NodeRuntime {
         this.operatorStatusText = message;
         this.serverName = undefined;
         this.remoteAddress = undefined;
-        if (this.mainSessionKey !== "main" && this.mainSessionKey.trim().length === 0) {
-           this.mainSessionKey = "main";
-        }
+        this.mainSessionKey = "main";
         this.updateStatus();
         this.chatController.onDisconnected(message);
       },
@@ -261,7 +259,7 @@ export class NodeRuntime {
     const host = this.prefs.getManualHost().trim();
     const port = this.prefs.getManualPort();
     hilog.info(0x3D00, 'NodeRuntime', "connectManual: host=%{public}s, port=%{public}d", host, port);
-    if (!host || port <= 0 || port > 65535) {
+    if (!host || port <= 0 || port > 65535 || !Number.isFinite(port)) {
       this.statusText = "Failed: invalid manual host/port";
       return;
     }
@@ -275,7 +273,7 @@ export class NodeRuntime {
       tlsEnabled: this.prefs.getManualTls()
     };
     const token = this.prefs.getGatewayToken();
-    hilog.info(0x3D00, 'NodeRuntime', "connectManual: initiating connect to endpoint, token=%{public}s", token);
+    hilog.info(0x3D00, 'NodeRuntime', "connectManual: initiating connect to endpoint, token=***");
     this.connect(endpoint, token);
   }
 
@@ -293,9 +291,9 @@ export class NodeRuntime {
     const operatorOpts = this.connectionManager.buildOperatorConnectOptions();
 
     hilog.info(0x3D00, 'NodeRuntime', "connect: calling operatorSession.connect and nodeSession.connect");
-    this.operatorSession.connect(endpoint, token, undefined, operatorOpts);
+    this.operatorSession.connect(endpoint, token, password, operatorOpts);
     setTimeout(() => {
-      this.nodeSession.connect(endpoint, token, undefined, nodeOpts);
+      this.nodeSession.connect(endpoint, token, password, nodeOpts);
     }, 500);
   }
 
