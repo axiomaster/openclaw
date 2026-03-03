@@ -4,9 +4,11 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webSocket } from '@kit.NetworkKit';
+import { GatewayTlsParams } from '../models/CommonModels';
+import { normalizeFingerprint, sha256Hex } from './GatewayTls';
 
 /**
- * A raw TCP-based WebSocket implementation designed to bypass 
+ * A raw TCP-based WebSocket implementation designed to bypass
  * HarmonyOS NETSTACK bugs related to Origin header injection and port-stripping.
  */
 export class RawWebSocket {
@@ -14,13 +16,17 @@ export class RawWebSocket {
   private isHandshakeComplete = false;
   private isTls = false;
   private base64 = new util.Base64Helper();
-  
+
   private onOpenCallback?: (err: BusinessError | undefined, value: Object | undefined) => void;
   private onMessageCallback?: (err: BusinessError | undefined, value: string | ArrayBuffer | undefined) => void;
   private onCloseCallback?: (err: BusinessError | undefined, value: webSocket.CloseResult | undefined) => void;
   private onErrorCallback?: (err: BusinessError) => void;
 
   private receiveBuffer: Uint8Array = new Uint8Array(0);
+  private textFrameBuffer: Uint8Array = new Uint8Array(0); // For fragmented text frames
+
+  private tlsParams: GatewayTlsParams | undefined = undefined;
+  private onTlsFingerprintAccepted?: (fingerprint: string) => void;
 
   public on(event: 'open' | 'message' | 'close' | 'error', callback: Function): void {
     if (event === 'open') this.onOpenCallback = callback as (err: BusinessError | undefined, value: Object | undefined) => void;
@@ -34,6 +40,11 @@ export class RawWebSocket {
     if (event === 'message') this.onMessageCallback = undefined;
     if (event === 'close') this.onCloseCallback = undefined;
     if (event === 'error') this.onErrorCallback = undefined;
+  }
+
+  public setTlsParams(params: GatewayTlsParams | undefined, onAccepted?: (fingerprint: string) => void): void {
+    this.tlsParams = params;
+    this.onTlsFingerprintAccepted = onAccepted;
   }
 
   public async connect(url: string, options?: webSocket.WebSocketRequestOptions): Promise<boolean> {
@@ -76,13 +87,73 @@ export class RawWebSocket {
       const path = match[3] || "/";
 
       hilog.info(0x3D00, 'RawWebSocket', `Connecting to ${host}:${port} (wss=${this.isTls})`);
-      
+
       if (this.isTls) {
         const tlsSocket = this.socket as socket.TLSSocket;
         await tlsSocket.connect({
           address: { address: host, port: port, family: 1 },
           secureOptions: {} // Use default OS validation
         });
+
+        // TLS fingerprint verification
+        if (this.tlsParams && this.tlsParams.required) {
+          try {
+            const certData = await tlsSocket.getRemoteCertificate();
+            if (!certData || !certData.data) {
+              hilog.error(0x3D00, 'RawWebSocket', "TLS pinning required but no server certificate");
+              if (this.onErrorCallback) {
+                this.onErrorCallback({ code: 1002, message: "TLS pinning failed: no certificate", name: "TlsError" } as BusinessError);
+              }
+              this.close();
+              return false;
+            }
+
+            const certBytes = typeof certData.data === 'string'
+              ? new util.TextEncoder().encodeInto(certData.data)
+              : certData.data as Uint8Array;
+            const serverFingerprint = await sha256Hex(certBytes);
+
+            // Inline TLS fingerprint verification logic (ArkTS doesn't support interface params)
+            const normalizedServer = normalizeFingerprint(serverFingerprint);
+            let accepted = false;
+
+            if (this.tlsParams.expectedFingerprint) {
+              const expected = normalizeFingerprint(this.tlsParams.expectedFingerprint);
+              if (normalizedServer === expected) {
+                accepted = true;
+              } else {
+                hilog.error(0x3D00, 'RawWebSocket',
+                  'TLS fingerprint mismatch. Expected: %{public}s, Got: %{public}s',
+                  expected.substring(0, 16) + '...', normalizedServer.substring(0, 16) + '...');
+              }
+            } else if (this.tlsParams.allowTOFU) {
+              hilog.info(0x3D00, 'RawWebSocket',
+                'TOFU: accepting fingerprint for %{public}s', this.tlsParams.stableId);
+              if (this.onTlsFingerprintAccepted) {
+                this.onTlsFingerprintAccepted(normalizedServer);
+              }
+              accepted = true;
+            }
+
+            if (!accepted) {
+              hilog.error(0x3D00, 'RawWebSocket', "TLS fingerprint verification failed");
+              if (this.onErrorCallback) {
+                this.onErrorCallback({ code: 1002, message: "TLS fingerprint mismatch", name: "TlsError" } as BusinessError);
+              }
+              this.close();
+              return false;
+            }
+
+            hilog.info(0x3D00, 'RawWebSocket', "TLS fingerprint verified successfully");
+          } catch (e) {
+            hilog.error(0x3D00, 'RawWebSocket', "TLS fingerprint check error: " + String(e));
+            if (this.onErrorCallback) {
+              this.onErrorCallback({ code: 1002, message: "TLS verification error", name: "TlsError" } as BusinessError);
+            }
+            this.close();
+            return false;
+          }
+        }
       } else {
         const tcpSocket = this.socket as socket.TCPSocket;
         await tcpSocket.connect({
@@ -159,12 +230,12 @@ export class RawWebSocket {
     while (this.receiveBuffer.length >= 2) {
       const byte1 = this.receiveBuffer[0];
       const byte2 = this.receiveBuffer[1];
-      
+
       const fin = (byte1 & 0x80) !== 0;
       const opcode = byte1 & 0x0F;
       const masked = (byte2 & 0x80) !== 0;
       let payloadLen = byte2 & 0x7F;
-      
+
       let headerLen = 2;
       if (payloadLen === 126) {
         if (this.receiveBuffer.length < 4) return;
@@ -184,7 +255,7 @@ export class RawWebSocket {
       }
 
       let payload = this.receiveBuffer.slice(headerLen, headerLen + payloadLen);
-      
+
       if (masked) {
         const maskKey = this.receiveBuffer.slice(maskKeyOffset, maskKeyOffset + 4);
         for (let i = 0; i < payload.length; i++) {
@@ -194,10 +265,38 @@ export class RawWebSocket {
 
       this.receiveBuffer = this.receiveBuffer.slice(headerLen + payloadLen);
 
+      // Handle text frames (0x1) and continuation frames (0x0)
       if (opcode === 0x1) {
-        const decoder = util.TextDecoder.create('utf-8');
-        const text = decoder.decodeToString(payload);
-        if (this.onMessageCallback) this.onMessageCallback(undefined, text);
+        // Text frame - either complete or start of fragmentation
+        if (fin) {
+          // Complete message
+          const decoder = util.TextDecoder.create('utf-8');
+          const text = decoder.decodeToString(payload);
+          if (this.onMessageCallback) this.onMessageCallback(undefined, text);
+        } else {
+          // Start of fragmented message - buffer it
+          this.textFrameBuffer = payload;
+        }
+      } else if (opcode === 0x0) {
+        // Continuation frame
+        if (this.textFrameBuffer.length > 0) {
+          // Append to buffer
+          const newBuf = new Uint8Array(this.textFrameBuffer.length + payload.length);
+          newBuf.set(this.textFrameBuffer);
+          newBuf.set(payload, this.textFrameBuffer.length);
+          this.textFrameBuffer = newBuf;
+
+          if (fin) {
+            // End of fragmented message - deliver complete text
+            const decoder = util.TextDecoder.create('utf-8');
+            const text = decoder.decodeToString(this.textFrameBuffer);
+            this.textFrameBuffer = new Uint8Array(0); // Reset buffer
+            if (this.onMessageCallback) this.onMessageCallback(undefined, text);
+          }
+        } else {
+          // Unexpected continuation frame without prior text frame
+          hilog.warn(0x3D00, 'RawWebSocket', "Received continuation frame without active text buffer");
+        }
       } else if (opcode === 0x8) {
         hilog.info(0x3D00, 'RawWebSocket', "Server sent close frame");
         if (this.onCloseCallback) this.onCloseCallback(undefined, { code: 1000, reason: 'Normal Closure' });

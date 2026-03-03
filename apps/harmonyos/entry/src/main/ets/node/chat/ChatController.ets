@@ -300,8 +300,9 @@ export class ChatController {
     const payload = JSON.parse(payloadJson) as Record<string, Object>;
     const sessionKey = payload.sessionKey as string | undefined;
     if (sessionKey && sessionKey !== this.sessionKey) return;
-    
+
     const runId = payload.runId as string | undefined;
+    if (runId && !this.pendingRuns.has(runId)) return;
 
     const stream = payload.stream as string | undefined;
     const data = payload.data as Record<string, Object> | undefined;

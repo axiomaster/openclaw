@@ -48,7 +48,7 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
     return uint8ArrayToHex(digest.data);
   } catch (e) {
     hilog.error(DOMAIN, TAG, 'sha256Hex failed: %{public}s', String(e));
-    throw e;
+    throw new Error('sha256Hex failed: ' + String(e));
   }
 }
 

@@ -3,7 +3,7 @@ import { RawWebSocket } from './RawWebSocket';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { GatewayEndpoint, GatewayConnectOptions, GatewayClientInfo } from '../models/CommonModels';
+import { GatewayEndpoint, GatewayConnectOptions, GatewayClientInfo, GatewayTlsParams } from '../models/CommonModels';
 import { DeviceIdentityStore, DeviceIdentity } from '../common/DeviceIdentityStore';
 import { SecurePrefs } from '../common/SecurePrefs';
 
@@ -206,7 +206,24 @@ export class GatewaySession {
     
     this.closeWebSocket();
     this.ws = new RawWebSocket();
-    
+
+    // Set TLS parameters for fingerprint pinning
+    if (endpoint.tlsEnabled) {
+      const tlsParams: GatewayTlsParams = {
+        required: true,
+        expectedFingerprint: endpoint.tlsFingerprintSha256,
+        allowTOFU: !endpoint.tlsFingerprintSha256, // Allow TOFU if no fingerprint is set
+        stableId: endpoint.stableId
+      };
+      this.ws.setTlsParams(tlsParams, (fingerprint: string) => {
+        // TOFU: Store the accepted fingerprint
+        // This could be persisted to SecurePrefs for future connections
+        hilog.info(GatewaySession.DOMAIN, GatewaySession.TAG,
+          "[%{public}s] TLS fingerprint accepted via TOFU: %{public}s...",
+          this.role, fingerprint.substring(0, 16));
+      });
+    }
+
     this.ws.on('open', (err: BusinessError | undefined, value: Object | undefined) => {
       console.info('GatewaySession', `[${this.role}] RAW WsOpen: err=${JSON.stringify(err)} value=${JSON.stringify(value)}`);
       this.onWsOpen();
